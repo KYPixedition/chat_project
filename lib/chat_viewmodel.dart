@@ -1,5 +1,6 @@
 import 'package:chat_project/chat_view.dart';
 import 'package:flutter_chat_types/flutter_chat_types.dart' as types;
+import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 class ChatViewmodel extends IChatViewModel {
@@ -118,6 +119,15 @@ class ChatViewmodel extends IChatViewModel {
       _isResponseButtonVisible = false;
       _isResponseCarousselVisible = true;
     } else {
+      await Future.delayed(const Duration(seconds: 1));
+      final textMessage = types.TextMessage(
+        author: _userAI,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        id: const Uuid().v4(),
+        text: "Maintenant, vous pouvez tester l'échange libre et la vidéo !",
+      );
+
+      _messages.insert(0, textMessage);
       _isResponseButtonVisible = false;
       _isResponseCarousselVisible = false;
     }
@@ -125,7 +135,32 @@ class ChatViewmodel extends IChatViewModel {
   }
 
   @override
-  Future<void> pickVideo() {
-    throw UnimplementedError();
+  Future<void> pickVideo() async {
+    final picker = ImagePicker();
+    final video = await picker.pickVideo(source: ImageSource.camera);
+
+    if (video != null) {
+      final videoMessage = types.FileMessage(
+        author: _user,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        id: const Uuid().v4(),
+        name: 'Video',
+        size: await video.length(),
+        uri: video.path,
+        mimeType: 'video/mp4',
+      );
+
+      _messages.insert(0, videoMessage);
+      await Future.delayed(const Duration(seconds: 1));
+      final textMessage = types.TextMessage(
+        author: _userAI,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        id: const Uuid().v4(),
+        text: "Maintenant, vous pouvez tester l'échange libre et la vidéo !",
+      );
+
+      _messages.insert(0, textMessage);
+      notifyListeners();
+    }
   }
 }

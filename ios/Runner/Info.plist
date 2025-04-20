@@ -45,5 +45,11 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Nous avons besoin d'accéder à votre caméra pour capturer des vidéos</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Nous avons besoin d'accéder à votre microphone pour enregistrer l'audio de vos vidéos</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Nous avons besoin d'accéder à votre galerie pour sauvegarder les vidéos capturées</string>
 </dict>
 </plist>

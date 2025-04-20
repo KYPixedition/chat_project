@@ -3,8 +3,6 @@ import 'package:bubble/bubble.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_chat_types/flutter_chat_types.dart' as types;
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:uuid/uuid.dart';
 import 'package:video_player/video_player.dart';
 
 abstract class IChatViewModel extends ChangeNotifier {
@@ -83,27 +81,6 @@ class _ChatViewState extends State<ChatView> {
       ),
     );
   }
-
-  Future<void> _pickVideo() async {
-    final picker = ImagePicker();
-    final video = await picker.pickVideo(source: ImageSource.camera);
-
-    if (video != null) {
-      final videoMessage = types.FileMessage(
-        author: widget.viewmodel.user,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-        id: const Uuid().v4(),
-        name: 'Video',
-        size: await video.length(),
-        uri: video.path,
-        mimeType: 'video/mp4',
-      );
-
-      setState(() {
-        widget.viewmodel.messages.insert(0, videoMessage);
-      });
-    }
-  }
 }
 
 class CustomBubbleWidget extends StatelessWidget {
@@ -120,6 +97,9 @@ class CustomBubbleWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (message is! types.TextMessage) {
+      return CustomMessageWidget(message: message, messageWidth: 200);
+    }
     final bubbleColor = isCurrentUser ? Colors.purple[100] : Colors.blue[200];
 
     final nip = isCurrentUser ? BubbleNip.rightBottom : BubbleNip.leftBottom;
@@ -176,14 +156,44 @@ class VideoMessageWidget extends StatefulWidget {
 
 class _VideoMessageWidgetState extends State<VideoMessageWidget> {
   late VideoPlayerController _controller;
+  bool _isInitialized = false;
+  bool _hasError = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.file(File(widget.filePath))
-      ..initialize().then((_) {
-        setState(() {});
+    _initializeVideoPlayer();
+  }
+
+  Future<void> _initializeVideoPlayer() async {
+    try {
+      final file = File(widget.filePath);
+      final fileExists = await file.exists();
+
+      if (!fileExists) {
+        setState(() => _hasError = true);
+        return;
+      }
+
+      _controller = VideoPlayerController.file(file);
+
+      await _controller.initialize();
+      _controller.addListener(() {
+        if (mounted) setState(() {});
       });
+
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+        });
+      }
+    }
   }
 
   @override
@@ -194,33 +204,95 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return _controller.value.isInitialized
-        ? AspectRatio(
-          aspectRatio: _controller.value.aspectRatio,
-          child: Stack(
-            alignment: Alignment.center,
+    if (_hasError) {
+      return Container(
+        height: 200,
+        width: 200,
+        decoration: BoxDecoration(
+          color: Colors.grey[300],
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              VideoPlayer(_controller),
-              IconButton(
-                icon: Icon(
-                  _controller.value.isPlaying
-                      ? Icons.pause_circle
-                      : Icons.play_circle,
-                  size: 48,
-                  color: Colors.white70,
-                ),
-                onPressed: () {
-                  setState(() {
-                    _controller.value.isPlaying
-                        ? _controller.pause()
-                        : _controller.play();
-                  });
-                },
-              ),
+              Icon(Icons.error_outline, color: Colors.red, size: 40),
+              SizedBox(height: 8),
+              Text("Impossible de charger la vidéo"),
             ],
           ),
-        )
-        : const CircularProgressIndicator();
+        ),
+      );
+    }
+
+    if (!_isInitialized) {
+      return Container(
+        height: 200,
+        width: 200,
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return Container(
+      width: 250,
+      height: 200,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        color: Colors.black,
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          AspectRatio(
+            aspectRatio: _controller.value.aspectRatio,
+            child: VideoPlayer(_controller),
+          ),
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                if (_controller.value.isPlaying) {
+                  _controller.pause();
+                } else {
+                  _controller.play();
+                }
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                _controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                color: Colors.white,
+                size: 32,
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: VideoProgressIndicator(
+              _controller,
+              allowScrubbing: true,
+              colors: VideoProgressColors(
+                playedColor: Colors.blue,
+                bufferedColor: Colors.grey,
+                backgroundColor: Colors.grey.shade300,
+              ),
+              padding: const EdgeInsets.all(0),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -260,7 +332,7 @@ class ResponseButtonWidget extends StatelessWidget {
   }
 }
 
-class CarousselWidget extends StatelessWidget {
+class CarousselWidget extends StatefulWidget {
   final List<String> responses;
   final IChatViewModel viewmodel;
   const CarousselWidget({
@@ -270,51 +342,82 @@ class CarousselWidget extends StatelessWidget {
   });
 
   @override
+  State<CarousselWidget> createState() => _CarousselWidgetState();
+}
+
+class _CarousselWidgetState extends State<CarousselWidget> {
+  final _pageController = PageController(viewportFraction: 0.8);
+  int _currentPage = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController.addListener(() {
+      int page = _pageController.page?.round() ?? 0;
+      if (_currentPage != page) {
+        setState(() {
+          _currentPage = page;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    CarouselController? controller;
     return SizedBox(
       height: 350,
-      child: PageView.builder(
-        controller: PageController(viewportFraction: 0.8),
-        itemCount: responses.length,
-        itemBuilder: (context, index) {
-          return GestureDetector(
-            onTap: () {
-              print("Tapped on: ${responses[index]}");
-              viewmodel.onSendButtonTouched(
-                types.PartialText(text: responses[index]),
-              );
-            },
-            child: Card(
-              elevation: 4,
-              margin: EdgeInsets.all(8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15),
-              ),
-              child: TonalityWidget(
-                response: responses[index],
-                viewmodel: viewmodel,
+      child: Column(
+        children: [
+          Expanded(
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: widget.responses.length,
+              itemBuilder: (context, index) {
+                return GestureDetector(
+                  onTap: () {
+                    widget.viewmodel.onSendButtonTouched(
+                      types.PartialText(text: widget.responses[index]),
+                    );
+                  },
+                  child: Card(
+                    elevation: 4,
+                    margin: EdgeInsets.all(8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    child: TonalityWidget(
+                      response: widget.responses[index],
+                      viewmodel: widget.viewmodel,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(
+              widget.responses.length,
+              (i) => Container(
+                margin: EdgeInsets.symmetric(horizontal: 2),
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: i == _currentPage ? Colors.blue : Colors.grey,
+                ),
               ),
             ),
-          );
-        },
+          ),
+          SizedBox(height: 16),
+        ],
       ),
-      // CarouselView(
-      //   itemExtent: MediaQuery.sizeOf(context).width - 100,
-      //   shrinkExtent: 200,
-      //   padding: const EdgeInsets.all(8),
-      //   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      //   itemSnapping: true,
-      //   elevation: 4,
-      //   backgroundColor: Colors.white,
-      //   controller: controller,
-      //   children: List.generate(responses.length, (int index) {
-      //     return TonalityWidget(
-      //       response: responses[index],
-      //       viewmodel: viewmodel,
-      //     );
-      //   }),
-      // ),
     );
   }
 }
@@ -335,13 +438,12 @@ class TonalityWidget extends StatelessWidget {
         Positioned(
           top: 8.0,
           bottom: 100,
-          // Positionné en bas du parent
-          left: 8.0, // Aligné à gauche
-          right: 8.0, // Aligné à droite pour prendre toute la largeur
+          left: 8.0,
+          right: 8.0,
           child: Container(
             decoration: BoxDecoration(
               color: Colors.blue,
-              borderRadius: BorderRadius.circular(12.0), // Coins arrondis
+              borderRadius: BorderRadius.circular(12.0),
             ),
             height: MediaQuery.of(context).size.width,
             width: MediaQuery.of(context).size.width,
@@ -357,14 +459,13 @@ class TonalityWidget extends StatelessWidget {
         ),
         Positioned(
           bottom: 108.0,
-          // Positionné en bas du parent
-          left: 16.0, // Aligné à gauche
-          right: 16.0, // Aligné à droite pour prendre toute la largeur
+          left: 16.0,
+          right: 16.0,
           child: Container(
             padding: const EdgeInsets.all(16.0),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(12.0), // Coins arrondis
+              borderRadius: BorderRadius.circular(12.0),
             ),
             height: 70,
             width: MediaQuery.of(context).size.width,
@@ -376,9 +477,8 @@ class TonalityWidget extends StatelessWidget {
         ),
         Positioned(
           bottom: 60.0,
-          // Positionné en bas du parent
-          left: 16.0, // Aligné à gauche
-          right: 16.0, // Aligné à droite pour prendre toute la largeur
+          left: 16.0,
+          right: 16.0,
           child: Text(
             response,
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
@@ -386,9 +486,8 @@ class TonalityWidget extends StatelessWidget {
         ),
         Positioned(
           bottom: 20.0,
-          // Positionné en bas du parent
-          left: 16.0, // Aligné à gauche
-          right: 16.0, // Aligné à droite pour prendre toute la largeur
+          left: 16.0,
+          right: 16.0,
           child: SizedBox(
             height: 40,
             child: Text(
@@ -452,7 +551,9 @@ class _CustomBottomWidgetState extends State<CustomBottomWidget> {
           if (_showCameraIcon)
             IconButton(
               icon: const Icon(Icons.videocam, color: Colors.blue),
-              onPressed: () {},
+              onPressed: () {
+                widget.viewmodel.pickVideo();
+              },
             ),
 
           if (!_showCameraIcon)
